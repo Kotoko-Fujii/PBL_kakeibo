@@ -68,6 +68,16 @@ def handle_message(event):
                 if any(w in item_name for w in ["食", "肉", "ランチ", "スタバ"]): category = "食費"
                 if any(w in item_name for w in ["薬", "洗剤", "ダイソー"]): category = "日用品"
 
+                # カテゴリ判定の下あたりに追加するイメージ
+                elif user_message == "合計":
+                    gc = get_gspread_client()
+                    sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
+                    worksheet = sh.get_worksheet(0)
+                    # 金額の列（3列目）をすべて取得して合計する
+                    prices = worksheet.col_values(3)[1:] # 1行目（見出し）を除外
+                    total = sum([int(p) for p in prices if p.isdigit()])
+                    reply_text = f"💰 今月の合計支出は {total:,}円 だよ！"
+
                 # 残予算計算
                 remaining = DAILY_BUDGET - item_price
                 if remaining >= 0:
