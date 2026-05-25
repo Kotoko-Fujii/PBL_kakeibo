@@ -2,6 +2,7 @@ import os
 import random
 import json
 import gspread
+import google.generativeai as genai
 from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask, request, abort
 from datetime import datetime
@@ -11,16 +12,40 @@ from linebot.models import (MessageEvent, TextMessage, TextSendMessage)
 
 app = Flask(__name__)
 
-# LINEの環境変数
+# --- 環境設定 ---
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
+# Geminiの設定
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
+# スプレッドシートの認証設定
 def get_gspread_client():
     key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
+# AIにカテゴリを判定してもらう関数
+def ask_gemini_category(item_name):
+    prompt = f"""
+    あなたは家計簿管理のアシスタントです。
+    「{item_name}」という品目を、以下のカテゴリのいずれか1つに分類してください。
+    
+    【カテゴリ一覧】
+    食費、日用品、娯楽、交通費、美容・衣服、その他
+    
+    回答はカテゴリ名（例：食費）のみを返し、余計な説明は一切しないでください。
+    """
+    try:
+        response = gemini_model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        return "その他"
+
+# 1日の予算
 DAILY_BUDGET = 2000 
 
 @app.route("/callback", methods=['POST'])
@@ -50,20 +75,19 @@ def handle_message(event):
         days_left = pay_day - now.day if now.day < pay_day else "完了"
         reply_text = f"給料日まであと【{days_left}日】！" if isinstance(days_left, int) else "今月の給料日は過ぎたよ！"
 
-    # 3. 【追加】合計金額の計算
+    # 3. 合計金額の確認
     elif user_message == "合計":
         try:
             gc = get_gspread_client()
             sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
             worksheet = sh.get_worksheet(0)
-            # 3列目（金額）をすべて取得
             prices = worksheet.col_values(3)[1:] 
             total = sum([int(p.replace(',', '')) for p in prices if p.replace(',', '').isdigit()])
             reply_text = f"💰 今月の合計支出は {total:,}円 だよ！"
         except Exception as e:
             reply_text = f"❌ 合計の計算でエラーが出たよ: {e}"
 
-    # 4. 家計簿の記録（スペースが含まれる場合）
+    # 4. 家計簿入力（スペース区切りのメッセージ）
     elif " " in user_message or " " in user_message:
         items = user_message.replace(" ", " ").split(" ")
         if len(items) >= 2:
@@ -72,19 +96,21 @@ def handle_message(event):
             
             if raw_price.isdigit():
                 item_price = int(raw_price)
-                category = "その他"
-                if any(w in item_name for w in ["食", "肉", "ランチ", "スタバ"]): category = "食費"
-                if any(w in item_name for w in ["薬", "洗剤", "ダイソー"]): category = "日用品"
+                
+                # --- AIによるカテゴリ判定 ---
+                category = ask_gemini_category(item_name)
 
+                # 残予算計算
                 remaining = DAILY_BUDGET - item_price
                 budget_msg = f"\n💰 今日の残り予算：あと {remaining:,}円" if remaining >= 0 else f"\n⚠️ 予算オーバー！ {abs(remaining):,}円 使いすぎだよ"
 
+                # スプシへの書き込み
                 try:
                     gc = get_gspread_client()
                     sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
                     worksheet = sh.get_worksheet(0)
                     worksheet.append_row([date_str, item_name, item_price, category])
-                    save_status = "\n✅ スプレッドシートに記録したよ！"
+                    save_status = f"\n✅ 「{category}」として記録したよ！"
                 except Exception as e:
                     save_status = f"\n❌ スプシ保存エラー: {e}"
 
@@ -93,7 +119,7 @@ def handle_message(event):
                     f"日時：{date_str}\n"
                     f"品目：{item_name}\n"
                     f"金額：{item_price:,}円\n"
-                    f"カテゴリ：{category}"
+                    f"判定カテゴリ：{category}"
                     f"{budget_msg}{save_status}"
                 )
             else:
