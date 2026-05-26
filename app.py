@@ -16,9 +16,13 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# Gemini API設定
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+# --- Geminiの初期設定（404エラー対策版） ---
+try:
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    # 最新の安定版モデル名を使用
+    gemini_model = genai.GenerativeModel("gemini-1.5-flash-latest")
+except Exception as e:
+    print(f"Gemini Init Error: {e}")
 
 # カテゴリの定義
 CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
@@ -30,42 +34,32 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# AIカテゴリ判定関数（さらに柔軟にした決定版）
+# AIカテゴリ判定関数（マッチング強化版）
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
     prompt = f"""
-    あなたは家計簿のプロです。入力された品名を、以下の【カテゴリ】のいずれか1つに分類してください。
+    入力された品名を、以下のカテゴリのいずれか1つに分類してください。
+    【選択肢】: {options}
     
-    【カテゴリ】
-    {options}
-    
-    【判定ルール】
-    - スーパー、外食、飲み物、コンビニ、スタバは「食費」
-    - 洗剤、薬、ティッシュ、百均、ダイソー、日用雑貨は「日用品」
+    【ルール】:
+    - 回答はカテゴリ名のみ。説明不要。
+    - コンビニ、外食、スタバ、スーパー、飲み物は「食費」
+    - 洗剤、百均、ドラッグストア、日用雑貨は「日用品」
     - 電車、バス、タクシー、ガソリンは「交通費」
-    - 映画、本、ゲーム、趣味の品、カラオケは「娯楽」
-    - 美容院、服、コスメ、散髪は「美容・衣服」
-    - 友人との食事、贈り物、お祝い、飲み会は「交際費」
-    - どれにも当てはまらない場合は「その他」
     
-    【回答方法】
-    - 答えは「{options}」の中から【カテゴリ名のみ】を返してください。
-    - 説明や「カテゴリ：」「です」などの余計な文字は一切不要です。
-
     品目：{item_name}
     """
     try:
         response = gemini_model.generate_content(prompt)
         result = response.text.strip()
         
-        # --- ここがポイント：AIの回答の中にカテゴリ名が含まれているか1つずつ探す ---
+        # AIの回答の中にカテゴリ名が含まれているかチェック
         for cat in CATEGORIES:
             if cat in result:
                 return cat
-                
         return "その他"
     except Exception as e:
-        print(f"Gemini Error: {e}")
+        print(f"Gemini API Error Detail: {e}")
         return "その他"
 
 # 1日の予算（ロジック担当設定）
@@ -92,7 +86,7 @@ def handle_message(event):
         advices = ["自炊は最強の節約！🍚", "マイボトルで毎日150円浮くよ🥤", "コンビニのついで買いを我慢！"]
         reply_text = f"💡 アドバイス：\n{random.choice(advices)}"
 
-    # 2. 給料日
+    # 2. 給料日カウント
     elif user_message == "給料日":
         pay_day = 25
         if now.day < pay_day:
@@ -102,21 +96,21 @@ def handle_message(event):
         else:
             reply_text = "今月の給料日は過ぎたよ！"
 
-    # 3. 合計金額
+    # 3. 今月の合計金額
     elif user_message == "合計":
         try:
             gc = get_gspread_client()
             sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
             worksheet = sh.get_worksheet(0)
-            prices = worksheet.col_values(3)[1:] 
+            prices = worksheet.col_values(3)[1:]
             total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
             reply_text = f"💰 合計支出：{total:,}円"
         except Exception as e:
             reply_text = f"❌ 合計エラー: {e}"
 
     # 4. メイン入力
-    elif " " in user_message or " " in user_message:
-        items = user_message.replace(" ", " ").split(" ")
+    elif " " in user_message or "　" in user_message:
+        items = user_message.replace("　", " ").split(" ")
         if len(items) >= 2:
             item_name = items[0]
             raw_price = items[1].replace("円", "").replace(",", "").replace("￥", "")
@@ -155,4 +149,3 @@ def handle_message(event):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
