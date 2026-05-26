@@ -30,22 +30,22 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# AIカテゴリ判定関数（柔軟なマッチング版）
+# AIカテゴリ判定関数（さらに柔軟にした決定版）
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
     prompt = f"""
-    あなたは家計簿管理の専門家です。入力された品名を、以下の【カテゴリ】のいずれか1つに分類してください。
+    あなたは家計簿のプロです。入力された品名を、以下の【カテゴリ】のいずれか1つに分類してください。
     
     【カテゴリ】
     {options}
     
     【判定ルール】
     - スーパー、外食、飲み物、コンビニ、スタバは「食費」
-    - 洗剤、薬、ティッシュ、百均、ダイソーは「日用品」
+    - 洗剤、薬、ティッシュ、百均、ダイソー、日用雑貨は「日用品」
     - 電車、バス、タクシー、ガソリンは「交通費」
-    - 映画、本、ゲーム、趣味の品は「娯楽」
-    - 美容院、服、コスメは「美容・衣服」
-    - 友人との食事、贈り物、お祝いは「交際費」
+    - 映画、本、ゲーム、趣味の品、カラオケは「娯楽」
+    - 美容院、服、コスメ、散髪は「美容・衣服」
+    - 友人との食事、贈り物、お祝い、飲み会は「交際費」
     - どれにも当てはまらない場合は「その他」
     
     【回答方法】
@@ -58,7 +58,7 @@ def ask_gemini_category(item_name):
         response = gemini_model.generate_content(prompt)
         result = response.text.strip()
         
-        # 修正ポイント：AIの回答の中に定義したカテゴリ名が含まれているかチェック
+        # --- ここがポイント：AIの回答の中にカテゴリ名が含まれているか1つずつ探す ---
         for cat in CATEGORIES:
             if cat in result:
                 return cat
@@ -92,29 +92,29 @@ def handle_message(event):
         advices = ["自炊は最強の節約！🍚", "マイボトルで毎日150円浮くよ🥤", "コンビニのついで買いを我慢！"]
         reply_text = f"💡 アドバイス：\n{random.choice(advices)}"
 
-    # 2. 給料日カウント
+    # 2. 給料日
     elif user_message == "給料日":
         pay_day = 25
         if now.day < pay_day:
             reply_text = f"給料日まであと【{pay_day - now.day}日】！"
         elif now.day == pay_day:
-            reply_text = "今日は給料日だよ！お疲れ様！💰"
+            reply_text = "今日は給料日だよ！💰"
         else:
             reply_text = "今月の給料日は過ぎたよ！"
 
-    # 3. 今月の合計金額
+    # 3. 合計金額
     elif user_message == "合計":
         try:
             gc = get_gspread_client()
             sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
             worksheet = sh.get_worksheet(0)
-            prices = worksheet.col_values(3)[1:] # 3列目（金額）
+            prices = worksheet.col_values(3)[1:] 
             total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
-            reply_text = f"💰 今月の合計支出は {total:,}円 だよ！"
+            reply_text = f"💰 合計支出：{total:,}円"
         except Exception as e:
-            reply_text = f"❌ 合計の計算に失敗したよ: {e}"
+            reply_text = f"❌ 合計エラー: {e}"
 
-    # 4. メイン入力ロジック
+    # 4. メイン入力
     elif " " in user_message or " " in user_message:
         items = user_message.replace(" ", " ").split(" ")
         if len(items) >= 2:
@@ -123,15 +123,11 @@ def handle_message(event):
             
             if raw_price.isdigit():
                 item_price = int(raw_price)
-                
-                # AI判定
-                category = ask_gemini_category(item_name)
+                category = ask_gemini_category(item_name) # AI判定
 
-                # 予算計算
                 remaining = DAILY_BUDGET - item_price
-                budget_msg = f"\n💰 残予算：あと {remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー！ {abs(remaining):,}円 使いすぎ！"
+                budget_msg = f"\n💰 残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー：{abs(remaining):,}円"
 
-                # スプシ記録
                 try:
                     gc = get_gspread_client()
                     sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
@@ -143,10 +139,9 @@ def handle_message(event):
 
                 reply_text = (
                     f"【入力完了】\n"
-                    f"日時：{date_str}\n"
                     f"品目：{item_name}\n"
                     f"金額：{item_price:,}円\n"
-                    f"判定カテゴリ：{category}"
+                    f"判定：{category}"
                     f"{budget_msg}{save_status}"
                 )
             else:
