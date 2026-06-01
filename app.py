@@ -31,43 +31,24 @@ def get_gspread_client():
 
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
-    # 【改良】AIに数字を無視するよう強く指示
     prompt = f"「{item_name}」を【{options}】のどれか1つに分類して。数字や『円』が含まれていても無視して名称だけで判断し、カテゴリ名のみ答えて。"
     
     try:
         response = gemini_model.generate_content(prompt)
         result = response.text.strip()
-        # 回答の中にカテゴリ名が含まれているかチェック
+        
         for cat in CATEGORIES:
             if cat in result:
                 return cat
-        return "その他"
+                
+        # 【デバッグ用】カテゴリが見つからない場合、AIの生の回答を返す
+        return f"【原因解明AI回答】: {result}"
+        
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        return "その他"
+        # 【デバッグ用】APIエラーの場合、エラーの中身を返す
+        return f"【原因解明API】: {e}""
 
 DAILY_BUDGET = 2000 
-#予算挿入
-def get_daily_budget():
-    try:
-        gc = get_gspread_client()
-        sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-        ws = sh.get_worksheet(0)
-        val = ws.acell('G1').value
-        if val and str(val).isdigit():
-            return int(val)
-        else:
-            ws.update_acell('G1', 2000)
-            return 2000
-    except Exception as e:
-        print(f"予算取得エラー: {e}")
-        return 2000
-
-def update_daily_budget(new_budget):
-    gc = get_gspread_client()
-    sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-    ws = sh.get_worksheet(0)
-    ws.update_acell('G1', new_budget)
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -84,8 +65,6 @@ def handle_message(event):
     user_message = event.message.text
     now = datetime.now()
     date_str = now.strftime('%Y/%m/%d %H:%M')
-    # 【手順②】スプレッドシートから現在の予算を読み込む
-    daily_budget = get_daily_budget()
 
     if user_message == "節約":
         reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
@@ -99,24 +78,6 @@ def handle_message(event):
             reply_text = f"💰 今月の合計：{total:,}円"
         except Exception as e:
             reply_text = f"❌ 集計エラー: {e}"
-    elif user_message == "予算設定":
-        reply_text = (
-            f"⚙️ 予算設定\n"
-            f"現在の1日の予算は【{daily_budget:,}円】です。\n\n"
-            f"変更したい場合は、\n「予算 3000」のように\n『予算』の後にスペースを空けて数字を送ってね！"
-        )
-
-    elif user_message.startswith("予算 ") or user_message.startswith("予算　"):
-        raw_price = user_message.replace("予算", "").replace("　", "").replace(" ", "").replace("円", "").replace(",", "").strip()
-        if raw_price.isdigit():
-            new_budget = int(raw_price)
-            try:
-                update_daily_budget(new_budget)
-                reply_text = f"✅ 1日の予算を【{new_budget:,}円】に変更したよ！"
-            except Exception as e:
-                reply_text = f"❌ 予算の更新に失敗しました: {e}"
-        else:
-            reply_text = "予算の金額は数字で送ってね！\n（例：予算 3000）"
     elif " " in user_message or "　" in user_message:
         items = user_message.replace("　", " ").split(" ")
         if len(items) >= 2:
@@ -128,7 +89,7 @@ def handle_message(event):
                 item_price = int(raw_price)
                 category = ask_gemini_category(item_name) # AI判定
                 
-                remaining = daily_budget - item_price
+                remaining = DAILY_BUDGET - item_price
                 budget_msg = f"\n💰 残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー：{abs(remaining):,}円"
                 
                 try:
