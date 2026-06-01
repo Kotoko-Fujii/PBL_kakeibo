@@ -46,7 +46,7 @@ def ask_gemini_category(item_name):
         
     except Exception as e:
         # 【デバッグ用】APIエラーの場合、エラーの中身を返す
-        return f"【原因解明API】: {e}""
+        return f"【原因解明API】: {e}"
 
 DAILY_BUDGET = 2000 
 
