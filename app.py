@@ -105,7 +105,7 @@ def handle_message(event):
             else:
                 reply_text = "金額は数字で送ってね！"
     else:
-        reply_text = "「スタバ 600」のように送ってね！"
+        reply_text = "「品目 金額」のように送ってね！"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
