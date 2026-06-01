@@ -20,20 +20,29 @@ handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_model = genai.GenerativeModel("gemini-pro")
 
-# カテゴリ定義
-CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
-
-def get_gspread_client():
-    key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
-    return gspread.authorize(creds)
-
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
-    # プロンプトで数字無視を徹底
-    prompt = f"「{item_name}」を【{options}】のどれか1つに分類して。数字や『円』が含まれていても無視して名称だけで判断し、カテゴリ名のみ答えて。"
+    prompt = f"""
+    あなたは家計簿のプロです。入力された単語を、以下の【カテゴリ】のいずれか1つに分類してください。
     
+    【カテゴリ】
+    {options}
+    
+    【判定ルール】
+    - スーパー、外食、飲み物、コンビニ、スタバは「食費」
+    - 洗剤、薬、ティッシュ、百均、ダイソーは「日用品」
+    - 電車、バス、タクシー、ガソリン、Suicaは「交通費」
+    - 映画、本、ゲーム、趣味の品は「娯楽」
+    - 美容院、服、コスメは「美容・衣服」
+    - 友人との食事、贈り物、お祝いは「交際費」
+    - どれにも当てはまらない場合は「その他」
+    
+    【回答ルール】
+    - 数字や「円」などの金額が含まれていても無視して、名称だけで判断してください。
+    - 答えは「{options}」の中から【カテゴリ名のみ】を返してください。
+
+    品目：{item_name}
+    """
     try:
         response = gemini_model.generate_content(prompt)
         result = response.text.strip()
@@ -43,11 +52,12 @@ def ask_gemini_category(item_name):
             if cat in result:
                 return cat
                 
-        return "その他"
+        # 何の言葉で答えて弾かれたのかを確認するため、一時的にAIの回答を表示
+        return f"その他（原因: {result}）"
         
     except Exception as e:
-        print(f"Gemini API Error: {e}")
-        return "その他"
+        # もしAPI通信自体が失敗している場合はエラー内容を表示
+        return f"その他（エラー: {e}）"
 
 DAILY_BUDGET = 2000 
 
