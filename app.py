@@ -16,10 +16,21 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# --- Gemini設定 (安定版モデル gemini-pro を指定) ---
+# --- Gemini設定 ---
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_model = genai.GenerativeModel("gemini-pro")
 
+# 【復旧】カテゴリの定義（これが消えていました！）
+CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
+
+# 【復旧】スプレッドシート認証（これも消えていました！）
+def get_gspread_client():
+    key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
+    return gspread.authorize(creds)
+
+# --- AI判定関数（デバッグ機能付き） ---
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
     prompt = f"""
