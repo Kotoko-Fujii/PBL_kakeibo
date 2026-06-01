@@ -66,3 +66,50 @@ def handle_message(event):
     user_message = event.message.text
     now = datetime.now()
     date_str = now.strftime('%Y/%m/%d %H:%M')
+
+    if user_message == "節約":
+        reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
+    elif user_message == "合計":
+        try:
+            gc = get_gspread_client()
+            sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
+            ws = sh.get_worksheet(0)
+            prices = ws.col_values(3)[1:] # 3列目（金額）
+            total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
+            reply_text = f"💰 今月の合計：{total:,}円"
+        except Exception as e:
+            reply_text = f"❌ 集計エラー: {e}"
+    elif " " in user_message or "　" in user_message:
+        items = user_message.replace("　", " ").split(" ")
+        if len(items) >= 2:
+            # 品目名から余計なスペースを除去
+            item_name = items[0].strip()
+            raw_price = items[1].replace("円", "").replace(",", "").replace("￥", "").strip()
+            
+            if raw_price.isdigit():
+                item_price = int(raw_price)
+                category = ask_gemini_category(item_name) # AI判定
+                
+                remaining = DAILY_BUDGET - item_price
+                budget_msg = f"\n💰 残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー：{abs(remaining):,}円"
+                
+                try:
+                    gc = get_gspread_client()
+                    sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
+                    ws = sh.get_worksheet(0)
+                    ws.append_row([date_str, item_name, item_price, category])
+                    save_status = f"\n✅ 「{category}」で記録！"
+                except Exception as e:
+                    save_status = f"\n❌ 保存失敗: {e}"
+                
+                reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n判定：{category}{budget_msg}{save_status}"
+            else:
+                reply_text = "金額は数字で送ってね！"
+    else:
+        reply_text = "「スタバ 600」のように送ってね！"
+
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
