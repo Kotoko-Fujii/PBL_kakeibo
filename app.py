@@ -16,21 +16,40 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# --- Gemini設定 ---
+# --- Gemini設定 (自動モデル探索機能) ---
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel("gemini-pro")
 
-# 【復旧】カテゴリの定義（これが消えていました！）
+def get_available_gemini_model():
+    try:
+        # Googleのサーバーに「今使えるモデルのリスト」を直接聞く
+        for m in genai.list_models():
+            # 文章を生成できる（generateContent）モデルを探す
+            if 'generateContent' in m.supported_generation_methods:
+                if 'flash' in m.name:
+                    return genai.GenerativeModel(m.name)
+        # flashモデルが見つからなければ、最初に見つかったプロ用のモデルなどを返す
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+    except Exception as e:
+        print(f"Model List Error: {e}")
+    # 万が一の予備
+    return genai.GenerativeModel("gemini-1.5-flash")
+
+# 使えるモデルを自動でセット！
+gemini_model = get_available_gemini_model()
+
+# --- カテゴリ定義 ---
 CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
 
-# 【復旧】スプレッドシート認証（これも消えていました！）
+# --- スプレッドシート認証 ---
 def get_gspread_client():
     key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# --- AI判定関数（デバッグ機能付き） ---
+# --- AI判定関数 ---
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
     prompt = f"""
