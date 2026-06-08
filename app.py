@@ -53,21 +53,14 @@ def ask_gemini_category(item_name):
 
 DAILY_BUDGET = 2000
 
-@app.route("/callback", methods=['POST'])
-def callback():
-    signature = request.headers['x-line-signature']
-    body = request.get_data(as_text=True)
-    try: handler.handle(body, signature)
-    except InvalidSignatureError: abort(400)
-    return 'OK'
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
+    # 1. 最初にメッセージを取得する
     user_message = event.message.text
     now = datetime.now()
     date_str = now.strftime('%Y/%m/%d %H:%M')
 
-    # --- [メニュー・新機能対応] ---
+    # 2. メニューボタンと新機能の判定 (ここだけ書けばOK)
     if user_message == "カテゴリ設定":
         reply_text = "「カテゴリ設定」ですね！新しく登録したいカテゴリ名を教えてね📝"
     elif user_message == "取り消し":
@@ -100,9 +93,9 @@ def handle_message(event):
             reply_text = f"📅 今日の支出合計：{today_spent:,}円\n💰 残り予算：{DAILY_BUDGET - today_spent:,}円"
         except Exception as e: reply_text = f"集計エラー: {e}"
     elif user_message in ["お買い物リスト", "リマインド", "予算"]:
-        reply_text = f"「{user_message}」ですね！機能作成中だよ！"
+        reply_text = f"「{user_message}」ですね！現在機能を作成中だよ！"
 
-    # --- [既存ロジック] ---
+    # 3. 既存の家計簿ロジック
     elif user_message == "節約":
         reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
     elif user_message == "合計":
@@ -127,7 +120,7 @@ def handle_message(event):
                     ws.append_row([date_str, item_name, item_price, category])
                     reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n判定：{category}"
                 except Exception as e: reply_text = f"保存失敗: {e}"
-            else: reply_text = "金額は数字で！"
+            else: reply_text = "金額は数字で送ってね！"
         else: reply_text = "「品目 金額」で送ってね！"
     else: reply_text = "メニューから選ぶか、「品目 金額」で入力してね！"
 
