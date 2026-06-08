@@ -150,38 +150,6 @@ def handle_message(event):
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
-
-
-# --- あなた専用のプッシュ通知機能 ---
-def send_my_push_notification(message_text):
-    """指定されたメッセージを指定のユーザーID宛てに強制プッシュ通知する"""
-    YOUR_LINE_USER_ID = os.getenv('YOUR_LINE_USER_ID', 'Ua4382333a019c4f25833eb780ba4b529')
-
-    if YOUR_LINE_USER_ID == 'Ua4382333a019c4f25833eb780ba4b529':
-        print("❌ エラー: あなたのLINEユーザーIDが設定されていません。")
-        return False
-    
-    try:
-        line_bot_api.push_message(YOUR_LINE_USER_ID, TextSendMessage(text=message_text))
-        return True
-    except Exception as e:
-        print(f"プッシュ通知エラー: {e}")
-        return False
-
-# --- GASから叩かれる夜の通知用URL ---
-@app.route("/notify/night", methods=['POST'])
-def notify_night():
-    send_my_push_notification("💡 こんばんは！\n今日は何かお買い物した？忘れないうちに「品目 金額」で教えてね！")
-    return 'OK', 200
-
-# --- GASから叩かれるリマインダー用URL ---
-@app.route("/notify/remind", methods=['POST'])
-def notify_remind():
-    data = request.get_json() or {}
-    msg = data.get("message", "⚠️ リマインダーの時間だよ！")
-    send_my_push_notification(msg)
-    return 'OK', 200
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
