@@ -21,22 +21,17 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_available_gemini_model():
     try:
-        # Googleのサーバーに「今使えるモデルのリスト」を直接聞く
         for m in genai.list_models():
-            # 文章を生成できる（generateContent）モデルを探す
             if 'generateContent' in m.supported_generation_methods:
                 if 'flash' in m.name:
                     return genai.GenerativeModel(m.name)
-        # flashモデルが見つからなければ、最初に見つかったプロ用のモデルなどを返す
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 return genai.GenerativeModel(m.name)
     except Exception as e:
         print(f"Model List Error: {e}")
-    # 万が一の予備
     return genai.GenerativeModel("gemini-1.5-flash")
 
-# 使えるモデルを自動でセット！
 gemini_model = get_available_gemini_model()
 
 # --- カテゴリ定義 ---
@@ -76,17 +71,11 @@ def ask_gemini_category(item_name):
     try:
         response = gemini_model.generate_content(prompt)
         result = response.text.strip()
-        
-        # 回答の中にカテゴリ名が含まれているかチェック
         for cat in CATEGORIES:
             if cat in result:
                 return cat
-                
-        # 何の言葉で答えて弾かれたのかを確認するため、一時的にAIの回答を表示
         return f"その他（原因: {result}）"
-        
     except Exception as e:
-        # もしAPI通信自体が失敗している場合はエラー内容を表示
         return f"その他（エラー: {e}）"
 
 DAILY_BUDGET = 2000 
@@ -114,7 +103,7 @@ def handle_message(event):
             gc = get_gspread_client()
             sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
             ws = sh.get_worksheet(0)
-            prices = ws.col_values(3)[1:] # 3列目（金額）
+            prices = ws.col_values(3)[1:]
             total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
             reply_text = f"💰 今月の合計：{total:,}円"
         except Exception as e:
@@ -122,14 +111,12 @@ def handle_message(event):
     elif " " in user_message or " " in user_message:
         items = user_message.replace(" ", " ").split(" ")
         if len(items) >= 2:
-            # 品目名から余計なスペースを除去
             item_name = items[0].strip()
             raw_price = items[1].replace("円", "").replace(",", "").replace("￥", "").strip()
             
             if raw_price.isdigit():
                 item_price = int(raw_price)
-                category = ask_gemini_category(item_name) # AI判定
-                
+                category = ask_gemini_category(item_name)
                 remaining = DAILY_BUDGET - item_price
                 budget_msg = f"\n💰 残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー：{abs(remaining):,}円"
                 
@@ -149,6 +136,36 @@ def handle_message(event):
         reply_text = "「品目 金額」のように送ってね！"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
+
+# --- 🔔 GAS連携用プッシュ通知機能 ---
+def send_my_push_notification(message_text):
+    """Renderの環境変数 USER_ID 宛てに通知を強制送信する"""
+    user_id = os.getenv('USER_ID')
+    if not user_id:
+        print("❌ エラー: Renderの環境変数に USER_ID が設定されていません。")
+        return False
+    try:
+        line_bot_api.push_message(user_id, TextSendMessage(text=message_text))
+        return True
+    except Exception as e:
+        print(f"プッシュ通知エラー: {e}")
+        return False
+
+@app.route("/notify/night", methods=['POST'])
+def notify_night():
+    """GASから夜呼ばれるルート"""
+    send_my_push_notification("💡 こんばんは！\n今日は何かお買い物した？忘れないうちに「品目 金額」で教えてね！")
+    return 'OK', 200
+
+@app.route("/notify/remind", methods=['POST'])
+def notify_remind():
+    """GASからリマインダーで呼ばれるルート"""
+    data = request.get_json() or {}
+    msg = data.get("message", "⚠️ リマインダーの時間だよ！")
+    send_my_push_notification(msg)
+    return 'OK', 200
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
