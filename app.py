@@ -155,11 +155,9 @@ def handle_message(event):
 # --- あなた専用のプッシュ通知機能 ---
 def send_my_push_notification(message_text):
     """指定されたメッセージを指定のユーザーID宛てに強制プッシュ通知する"""
-    # ⚠️ あなたのLINEユーザーIDをここに直接貼り付けてください。
-    # LINE Developersの「チャネル基本設定」の一番下にある「Your user ID (Uから始まる文字列)」です。
-    YOUR_LINE_USER_ID = os.getenv('YOUR_LINE_USER_ID', 'Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    YOUR_LINE_USER_ID = os.getenv('YOUR_LINE_USER_ID', 'Ua4382333a019c4f25833eb780ba4b529')
 
-    if YOUR_LINE_USER_ID == 'Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx':
+    if YOUR_LINE_USER_ID == 'Ua4382333a019c4f25833eb780ba4b529':
         print("❌ エラー: あなたのLINEユーザーIDが設定されていません。")
         return False
     
