@@ -12,11 +12,9 @@ from linebot.models import (MessageEvent, TextMessage, TextSendMessage)
 
 app = Flask(__name__)
 
-# --- 各種設定 ---
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# --- Gemini設定 (自動モデル探索機能) ---
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_available_gemini_model():
@@ -34,17 +32,14 @@ def get_available_gemini_model():
 
 gemini_model = get_available_gemini_model()
 
-# --- カテゴリ定義 ---
 CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
 
-# --- スプレッドシート認証 ---
 def get_gspread_client():
     key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# --- AI判定関数 ---
 def ask_gemini_category(item_name):
     options = "、".join(CATEGORIES)
     prompt = f"""
@@ -138,7 +133,7 @@ def handle_message(event):
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 
-# --- 🔔 GAS連携用プッシュ通知機能 ---
+
 def send_my_push_notification(message_text):
     """Renderの環境変数 USER_ID 宛てに通知を強制送信する"""
     user_id = os.getenv('USER_ID')
