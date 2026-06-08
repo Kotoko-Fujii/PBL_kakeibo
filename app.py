@@ -20,23 +20,18 @@ handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_available_gemini_model():
-    try:
-        # Googleのサーバーに「今使えるモデルのリスト」を直接聞く
-        for m in genai.list_models():
-            # 文章を生成できる（generateContent）モデルを探す
-            if 'generateContent' in m.supported_generation_methods:
-                if 'flash' in m.name:
-                    return genai.GenerativeModel(m.name)
-        # flashモデルが見つからなければ、最初に見つかったプロ用のモデルなどを返す
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                return genai.GenerativeModel(m.name)
-    except Exception as e:
-        print(f"Model List Error: {e}")
-    # 万が一の予備
-    return genai.GenerativeModel("gemini-1.5-flash")
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                if 'flash' in m.name:
+                    return genai.GenerativeModel(m.name)
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+    except Exception as e:
+        print(f"Model List Error: {e}")
+    return genai.GenerativeModel("gemini-1.5-flash")
 
-# 使えるモデルを自動でセット！
 gemini_model = get_available_gemini_model()
 
 # --- カテゴリ定義 ---
@@ -44,112 +39,134 @@ CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "
 
 # --- スプレッドシート認証 ---
 def get_gspread_client():
-    key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
-    return gspread.authorize(creds)
+    key_json = json.loads(os.getenv('GCP_SERVICE_ACCOUNT_KEY'))
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
+    return gspread.authorize(creds)
 
 # --- AI判定関数 ---
 def ask_gemini_category(item_name):
-    options = "、".join(CATEGORIES)
-    prompt = f"""
-    あなたは家計簿のプロです。入力された単語を、以下の【カテゴリ】のいずれか1つに分類してください。
-    
-    【カテゴリ】
-    {options}
-    
-    【判定ルール】
-    - スーパー、外食、飲み物、コンビニ、スタバは「食費」
-    - 洗剤、薬、ティッシュ、百均、ダイソーは「日用品」
-    - 電車、バス、タクシー、ガソリン、Suicaは「交通費」
-    - 映画、本、ゲーム、趣味の品は「娯楽」
-    - 美容院、服、コスメは「美容・衣服」
-    - 友人との食事、贈り物、お祝いは「交際費」
-    - どれにも当てはまらない場合は「その他」
-    
-    【回答ルール】
-    - 数字や「円」などの金額が含まれていても無視して、名称だけで判断してください。
-    - 答えは「{options}」の中から【カテゴリ名のみ】を返してください。
+    options = "、".join(CATEGORIES)
+    prompt = f"""
+    あなたは家計簿のプロです。入力された単語を、以下の【カテゴリ】のいずれか1つに分類してください。
+    
+    【カテゴリ】
+    {options}
+    
+    【判定ルール】
+    - スーパー、外食、飲み物、コンビニ、スタバは「食費」
+    - 洗剤、薬、ティッシュ、百均、ダイソーは「日用品」
+    - 電車、バス、タクシー、ガソリン、Suicaは「交通費」
+    - 映画、本、ゲーム、趣味の品は「娯楽」
+    - 美容院、服、コスメは「美容・衣服」
+    - 友人との食事、贈り物、お祝いは「交際費」
+    - どれにも当てはまらない場合は「その他」
+    
+    【回答ルール】
+    - 数字や「円」などの金額が含まれていても無視して、名称だけで判断してください。
+    - 答えは「{options}」の中から【カテゴリ名のみ】を返してください。
 
-    品目：{item_name}
-    """
-    try:
-        response = gemini_model.generate_content(prompt)
-        result = response.text.strip()
-        
-        # 回答の中にカテゴリ名が含まれているかチェック
-        for cat in CATEGORIES:
-            if cat in result:
-                return cat
-                
-        # 何の言葉で答えて弾かれたのかを確認するため、一時的にAIの回答を表示
-        return f"その他（原因: {result}）"
-        
-    except Exception as e:
-        # もしAPI通信自体が失敗している場合はエラー内容を表示
-        return f"その他（エラー: {e}）"
+    品目：{item_name}
+    """
+    try:
+        response = gemini_model.generate_content(prompt)
+        result = response.text.strip()
+        for cat in CATEGORIES:
+            if cat in result:
+                return cat
+        return f"その他（原因: {result}）"
+    except Exception as e:
+        return f"その他（エラー: {e}）"
 
-DAILY_BUDGET = 2000 
+DAILY_BUDGET = 2000 
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['x-line-signature']
-    body = request.get_data(as_text=True)
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-    return 'OK'
+    signature = request.headers['x-line-signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_message = event.message.text
-    now = datetime.now()
-    date_str = now.strftime('%Y/%m/%d %H:%M')
+    user_message = event.message.text
+    now = datetime.now()
+    date_str = now.strftime('%Y/%m/%d %H:%M')
 
-    if user_message == "節約":
-        reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
-    elif user_message == "合計":
-        try:
-            gc = get_gspread_client()
-            sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-            ws = sh.get_worksheet(0)
-            prices = ws.col_values(3)[1:] # 3列目（金額）
-            total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
-            reply_text = f"💰 今月の合計：{total:,}円"
-        except Exception as e:
-            reply_text = f"❌ 集計エラー: {e}"
-    elif " " in user_message or "　" in user_message:
-        items = user_message.replace("　", " ").split(" ")
-        if len(items) >= 2:
-            # 品目名から余計なスペースを除去
-            item_name = items[0].strip()
-            raw_price = items[1].replace("円", "").replace(",", "").replace("￥", "").strip()
-            
-            if raw_price.isdigit():
-                item_price = int(raw_price)
-                category = ask_gemini_category(item_name) # AI判定
-                
-                remaining = DAILY_BUDGET - item_price
-                budget_msg = f"\n💰 残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー：{abs(remaining):,}円"
-                
-                try:
-                    gc = get_gspread_client()
-                    sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-                    ws = sh.get_worksheet(0)
-                    ws.append_row([date_str, item_name, item_price, category])
-                    save_status = f"\n✅ 「{category}」で記録！"
-                except Exception as e:
-                    save_status = f"\n❌ 保存失敗: {e}"
-                
-                reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n判定：{category}{budget_msg}{save_status}"
-            else:
-                reply_text = "金額は数字で送ってね！"
-    else:
-        reply_text = "「品目　金額」のように送ってね！"
+    if user_message == "節約":
+        reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
+    elif user_message == "合計":
+        try:
+            gc = get_gspread_client()
+            sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
+            ws = sh.get_worksheet(0)
+            prices = ws.col_values(3)[1:]
+            total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
+            reply_text = f"💰 今月の合計：{total:,}円"
+        except Exception as e:
+            reply_text = f"❌ 集計エラー: {e}"
+    elif " " in user_message or " " in user_message:
+        items = user_message.replace(" ", " ").split(" ")
+        if len(items) >= 2:
+            item_name = items[0].strip()
+            raw_price = items[1].replace("円", "").replace(",", "").replace("￥", "").strip()
+            
+            if raw_price.isdigit():
+                item_price = int(raw_price)
+                category = ask_gemini_category(item_name)
+                remaining = DAILY_BUDGET - item_price
+                budget_msg = f"\n💰 残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ オーバー：{abs(remaining):,}円"
+                
+                try:
+                    gc = get_gspread_client()
+                    sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
+                    ws = sh.get_worksheet(0)
+                    ws.append_row([date_str, item_name, item_price, category])
+                    save_status = f"\n✅ 「{category}」で記録！"
+                except Exception as e:
+                    save_status = f"\n❌ 保存失敗: {e}"
+                
+                reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n判定：{category}{budget_msg}{save_status}"
+            else:
+                reply_text = "金額は数字で送ってね！"
+    else:
+        reply_text = "「品目 金額」のように送ってね！"
 
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
+
+# --- 🔔 追加：GAS連携用プッシュ通知機能 ---
+def send_my_push_notification(message_text):
+    """Renderの環境変数 USER_ID 宛てに通知を強制送信する"""
+    user_id = os.getenv('USER_ID')
+    if not user_id:
+        print("❌ エラー: Renderの環境変数に USER_ID が設定されていません。")
+        return False
+    try:
+        line_bot_api.push_message(user_id, TextSendMessage(text=message_text))
+        return True
+    except Exception as e:
+        print(f"プッシュ通知エラー: {e}")
+        return False
+
+@app.route("/notify/night", methods=['POST'])
+def notify_night():
+    """GASから夜呼ばれるルート"""
+    send_my_push_notification("💡 こんばんは！\n今日は何かお買い物した？忘れないうちに「品目 金額」で教えてね！")
+    return 'OK', 200
+
+@app.route("/notify/remind", methods=['POST'])
+def notify_remind():
+    """GASからリマインダーで呼ばれるルート"""
+    data = request.get_json() or {}
+    msg = data.get("message", "⚠️ リマインダーの時間だよ！")
+    send_my_push_notification(msg)
+    return 'OK', 200
+
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
