@@ -129,3 +129,41 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+
+# --- [GAS連携・通知用エンドポイント] ---
+
+@app.route("/notify/night", methods=['POST'])
+def notify_night():
+    """GASから夜21時に呼ばれる通知機能"""
+    try:
+        user_id = os.getenv('USER_ID')
+        if not user_id:
+            return 'USER_ID not found', 400
+            
+        message = TextSendMessage(text="夜9時だよ！今日の入力は忘れてない？🌙")
+        line_bot_api.push_message(user_id, message)
+        return 'OK', 200
+    except Exception as e:
+        print(f"Night Notification Error: {e}")
+        return f"Error: {e}", 500
+
+
+@app.route("/notify/remind", methods=['POST'])
+def notify_remind():
+    """GASから固定費リマインド日に呼ばれる通知機能"""
+    try:
+        user_id = os.getenv('USER_ID')
+        if not user_id:
+            return 'USER_ID not found', 400
+            
+        # GASから送られてきたjson（メッセージ内容）を受け取る
+        data = request.get_json()
+        remind_message = data.get("message", "明日は引き落とし日だよ！")
+        
+        message = TextSendMessage(text=remind_message)
+        line_bot_api.push_message(user_id, message)
+        return 'OK', 200
+    except Exception as e:
+        print(f"Remind Notification Error: {e}")
+        return f"Error: {e}", 500
