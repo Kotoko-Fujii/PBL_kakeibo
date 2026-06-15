@@ -1,14 +1,15 @@
 import os
 import random
 import json
+import re
 import gspread
 import google.generativeai as genai
 from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask, request, abort
 from datetime import datetime
-from linebot import (LineBotApi, WebhookHandler)
-from linebot.exceptions import (InvalidSignatureError)
-from linebot.models import (MessageEvent, TextMessage, TextSendMessage)
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 app = Flask(__name__)
 
@@ -16,21 +17,15 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# --- Gemini設定 (自動モデル探索機能) ---
+# --- Gemini設定 ---
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_available_gemini_model():
+    # クラウド環境でのコールドスタート対策として、探索せず最新の軽量高速モデルを直接指定するのがBotでは安全です
     try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if 'flash' in m.name:
-                    return genai.GenerativeModel(m.name)
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                return genai.GenerativeModel(m.name)
-    except Exception as e:
-        print(f"Model List Error: {e}")
-    return genai.GenerativeModel("gemini-1.5-flash")
+        return genai.GenerativeModel("gemini-2.5-flash")
+    except:
+        return genai.GenerativeModel("gemini-1.5-flash")
 
 gemini_model = get_available_gemini_model()
 CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
@@ -42,12 +37,10 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# --- 予算設定・取得の便利関数 ---
 def get_or_create_settings_sheet(sh):
     try:
         return sh.worksheet("設定")
     except:
-        # 設定シートが無ければ自動で作る
         ws = sh.add_worksheet(title="設定", rows="10", cols="2")
         ws.update_acell('A1', '毎日の予算')
         ws.update_acell('B1', '2000')
@@ -67,10 +60,17 @@ def set_budget(sh, amount):
 
 def get_today_spent(ws, today_str):
     try:
-        records = ws.get_all_values()[1:] # 1行目のヘッダー等を飛ばす
+        # データが増えた時のタイムアウト対策：直近100件のみ取得して計算（過去データすべてを舐めない）
+        all_values = ws.get_all_values()
+        records = all_values[1:]  # ヘッダーをスキップ
+        
+        # 過去ログが膨大な場合、直近の100件に絞る（1日に100回以上入力しない前提）
+        if len(records) > 100:
+            records = records[-100:]
+            
         total = 0
         for r in records:
-            if len(r) >= 3 and r[0].startswith(today_str):
+            if len(r) >= 3 and str(r[0]).startswith(today_str):
                 price_str = str(r[2]).replace(',', '').replace('円', '')
                 if price_str.isdigit():
                     total += int(price_str)
@@ -94,18 +94,22 @@ def ask_gemini_category(item_name):
     - どれにも当てはまらない場合は「その他」
     【回答ルール】
     - 数字や「円」などの金額が含まれていても無視して、名称だけで判断してください。
-    - 答えは「{options}」の中から【カテゴリ名のみ】を返してください。
+    - 答えは必ず「{options}」の中から【カテゴリ名のみ】を厳密に返してください。余計な解説は不要です。
     品目：{item_name}
     """
     try:
-        response = gemini_model.generate_content(prompt)
+        # 思考プロセスを省き、最速で返信させるため設定を追加
+        response = gemini_model.generate_content(
+            prompt,
+            generation_config={"temperature": 0.0}  # 判定のブレをなくす
+        )
         result = response.text.strip()
         for cat in CATEGORIES:
             if cat in result:
                 return cat
-        return f"その他（原因: {result}）"
+        return "その他"
     except Exception as e:
-        return f"その他（エラー: {e}）"
+        return "その他"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -119,7 +123,8 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_message = event.message.text.strip()
+    # 全角スペースを半角スペースに統一し、前後の空白を削除
+    user_message = event.message.text.replace(" ", " ").strip()
     now = datetime.now()
     date_str = now.strftime('%Y/%m/%d %H:%M')
     today_str = now.strftime('%Y/%m/%d')
@@ -139,16 +144,20 @@ def handle_message(event):
         current_budget = get_budget(sh)
         reply_text = f"現在の「毎日の予算」は {current_budget:,}円 です。\n変更する場合は、「予算 3000」のように送ってね！💰"
         
-    elif user_message.startswith("予算 ") or user_message.startswith("予算 "):
+    elif user_message.startswith("予算 "):
         try:
-            new_budget_str = user_message.replace(" ", " ").split(" ")[1].replace(",", "").replace("円", "")
-            if new_budget_str.isdigit():
-                set_budget(sh, int(new_budget_str))
-                reply_text = f"✅ 毎日の予算を {int(new_budget_str):,}円 に設定しました！\n（明日からもこの予算がリセットして適用されます）"
+            parts = user_message.split(" ")
+            if len(parts) >= 2:
+                new_budget_str = parts[1].replace(",", "").replace("円", "")
+                if new_budget_str.isdigit():
+                    set_budget(sh, int(new_budget_str))
+                    reply_text = f"✅ 毎日の予算を {int(new_budget_str):,}円 に設定しました！"
+                else:
+                    reply_text = "予算の金額は数字で教えてね！"
             else:
-                reply_text = "予算の金額は数字で教えてね！"
+                reply_text = "「予算 3000」のように送ってね！"
         except:
-            reply_text = "設定に失敗しました。「予算 3000」のように送ってね！"
+            reply_text = "設定に失敗しました。"
 
     elif user_message == "取り消し":
         try:
@@ -159,7 +168,9 @@ def handle_message(event):
                 msg_lines = ["どれを取り消しますか？番号（1〜5）を送ってね！🗑️\n"]
                 for i, r in enumerate(recent):
                     if len(r) >= 3:
-                        msg_lines.append(f"{i+1}: {r[0].split(' ')[1]} - {r[1]} {r[2]}円")
+                        # 念のためインデックスエラー対策
+                        time_part = r[0].split(' ')[1] if ' ' in r[0] else r[0]
+                        msg_lines.append(f"{i+1}: {time_part} - {r[1]} {r[2]}円")
                 reply_text = "\n".join(msg_lines)
             else:
                 reply_text = "取り消せる記録がないよ！"
@@ -170,8 +181,7 @@ def handle_message(event):
         try:
             records = ws.get_all_values()
             delete_num = int(user_message)
-            if len(records) >= delete_num:
-                # 削除する行を下から特定
+            if len(records) >= delete_num + 1: # ヘッダー分を考慮
                 target_idx = len(records) - delete_num + 1 
                 deleted_row = records[target_idx - 1]
                 ws.delete_rows(target_idx)
@@ -196,8 +206,9 @@ def handle_message(event):
             reply_text = f"❌ 集計エラー: {e}"
 
     # 2. 家計簿の入力機能（品目 金額）
-    elif " " in user_message or " " in user_message:
-        items = user_message.replace(" ", " ").split(" ")
+    elif " " in user_message:
+        # 複数の連続スペースがあっても綺麗に分割する処理
+        items = [i for i in user_message.split(" ") if i]
         if len(items) >= 2:
             item_name = items[0].strip()
             raw_price = items[1].replace("円", "").replace(",", "").replace("￥", "").strip()
@@ -207,21 +218,17 @@ def handle_message(event):
                 category = ask_gemini_category(item_name) # AI判定
                 
                 try:
-                    # 今日の予算と、今日のこれまでの合計支出を取得
                     budget = get_budget(sh)
                     today_spent = get_today_spent(ws, today_str)
                     
-                    # 記録をスプレッドシートに追加
+                    # スプレッドシートへ追加
                     ws.append_row([date_str, item_name, item_price, category])
                     
-                    # 残りを計算（今日使った分 + 今入力した分）
                     new_today_spent = today_spent + item_price
                     remaining = budget - new_today_spent
                     
                     budget_msg = f"\n💰 今日の残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ 今日の予算オーバー：{abs(remaining):,}円"
-                    save_status = f"\n✅ 「{category}」で記録！"
-                    
-                    reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円{save_status}{budget_msg}"
+                    reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n✅ 「{category}」で記録！{budget_msg}"
                 except Exception as e:
                     reply_text = f"❌ 保存失敗: {e}"
             else:
