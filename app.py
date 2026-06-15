@@ -1,6 +1,7 @@
 import os
 import random
 import json
+import re
 import gspread
 import gspread.exceptions
 import google.generativeai as genai
@@ -36,7 +37,7 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# ★【新規追加】ユーザー専用のタブ（ワークシート）を取得または作成する関数
+# ユーザー専用のタブ（ワークシート）を取得または作成する関数
 def get_or_create_user_sheet(sh, user_id):
     try:
         # すでにそのユーザーIDのタブがあれば、それを開く
@@ -133,7 +134,7 @@ def callback():
 def handle_message(event):
     user_message = re.sub(r'\s+', ' ', event.message.text).strip()
     
-    # ★【変更】送信者のLINEユーザーIDを取得
+    # 送信者のLINEユーザーIDを取得
     user_id = event.source.user_id
 
     now = datetime.now()
@@ -143,7 +144,7 @@ def handle_message(event):
     try:
         gc = get_gspread_client()
         sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-        # ★【変更】一律で左端のシートを開くのではなく、ユーザー専用のタブを開く（無ければ自動生成）
+        # ユーザー専用のタブを開く（無ければ自動生成）
         ws = get_or_create_user_sheet(sh, user_id)
     except Exception as e:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"スプレッドシート接続エラー: {e}"))
@@ -171,10 +172,11 @@ def handle_message(event):
         except:
             reply_text = "設定に失敗しました。"
 
+    # ★ 修正箇所1：「取り消し」リストの表示（ヘッダー除外＆10件表示）
     elif user_message == "取り消し":
         try:
             all_records = ws.get_all_values()
-            data_records = all_records[1:] # ここでヘッダー（1行目）を完全に除外！
+            data_records = all_records[1:] # 1行目（ヘッダー）を完全に除外
             
             if len(data_records) > 0:
                 recent = data_records[-10:] # 直近10回分を取得
@@ -190,15 +192,16 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"エラーが発生しました: {e}"
 
-    elif user_message.isdigit() and 1 <= int(user_message) <= 10: # 1〜10に対応
+    # ★ 修正箇所2：「取り消し」の実行（1〜10に対応＆ヘッダーのズレ補正）
+    elif user_message.isdigit() and 1 <= int(user_message) <= 10:
         try:
             all_records = ws.get_all_values()
-            data_records = all_records[1:] # ヘッダーを除外したデータ数を確認
+            data_records = all_records[1:] # ヘッダーを除外した純粋なデータ
             delete_num = int(user_message)
             
             # 選択された番号が、実際のデータ数以内かチェック
             if delete_num <= len(data_records):
-                # 削除対象の行番号（スプレッドシート上の行番号はヘッダー含むため all_records を基準に計算）
+                # スプレッドシート上の行番号はヘッダーを含むため、all_records を基準に計算
                 target_idx = len(all_records) - delete_num + 1 
                 deleted_row = all_records[target_idx - 1] # 削除する行のデータを取得
                 
