@@ -18,14 +18,21 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# --- Gemini設定 ---
+# --- Gemini設定 (一番安定していた自動探索機能に復元) ---
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_available_gemini_model():
     try:
-        return genai.GenerativeModel("gemini-2.5-flash")
-    except:
-        return genai.GenerativeModel("gemini-1.5-flash")
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                if 'flash' in m.name:
+                    return genai.GenerativeModel(m.name)
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                return genai.GenerativeModel(m.name)
+    except Exception as e:
+        print(f"Model List Error: {e}")
+    return genai.GenerativeModel("gemini-1.5-flash")
 
 gemini_model = get_available_gemini_model()
 CATEGORIES = ["食費", "日用品", "交通費", "娯楽", "美容・衣服", "交際費", "その他"]
@@ -43,8 +50,8 @@ def get_or_create_user_sheet(sh, user_id):
         # すでにそのユーザーIDのタブがあれば、それを開く
         return sh.worksheet(user_id)
     except gspread.exceptions.WorksheetNotFound:
-        # タブが見つからなければ、新しく作成する（初期設定：1000行、4列）
-        ws = sh.add_worksheet(title=user_id, rows="1000", cols="4")
+        # タブが見つからなければ、新しく作成する（安全のため数値で指定）
+        ws = sh.add_worksheet(title=user_id, rows=1000, cols=4)
         # 1行目にヘッダーを書き込む
         ws.append_row(["日時", "品目", "金額", "カテゴリ"])
         return ws
@@ -53,7 +60,7 @@ def get_or_create_settings_sheet(sh):
     try:
         return sh.worksheet("設定")
     except:
-        ws = sh.add_worksheet(title="設定", rows="10", cols="2")
+        ws = sh.add_worksheet(title="設定", rows=10, cols=2)
         ws.update_acell('A1', '毎日の予算')
         ws.update_acell('B1', '2000')
         return ws
@@ -132,6 +139,7 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
+    # 全角スペースや連続するスペースを安全に1つの半角スペースに統一
     user_message = re.sub(r'\s+', ' ', event.message.text).strip()
     
     # 送信者のLINEユーザーIDを取得
@@ -172,7 +180,7 @@ def handle_message(event):
         except:
             reply_text = "設定に失敗しました。"
 
-    # ★ 修正箇所1：「取り消し」リストの表示（ヘッダー除外＆10件表示）
+    # 「取り消し」リストの表示（ヘッダー除外＆10件表示）
     elif user_message == "取り消し":
         try:
             all_records = ws.get_all_values()
@@ -192,7 +200,7 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"エラーが発生しました: {e}"
 
-    # ★ 修正箇所2：「取り消し」の実行（1〜10に対応＆ヘッダーのズレ補正）
+    # 「取り消し」の実行（1〜10に対応＆ヘッダーのズレ補正）
     elif user_message.isdigit() and 1 <= int(user_message) <= 10:
         try:
             all_records = ws.get_all_values()
