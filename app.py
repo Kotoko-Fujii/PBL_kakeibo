@@ -1,7 +1,6 @@
 import os
 import random
 import json
-import re
 import gspread
 import google.generativeai as genai
 from oauth2client.service_account import ServiceAccountCredentials
@@ -192,7 +191,7 @@ def handle_message(event):
             reply_text = f"取り消し失敗: {e}"
 
     elif user_message == "リマインド":
-        reply_text = "🔔 消耗品のリマインドは毎日夜10時に自動で届くよ！\nシャンプー、洗剤、スポンジの購入間隔をシステムが監視中だよ👀"
+        reply_text = "🔔 消耗品のリマインドは毎日夜10時に自動で届くよ！\nシャンプー、歯ブラシ、洗剤、スポンジの購入間隔をシステムが監視中だよ👀"
 
     elif user_message in ["カテゴリ設定", "お買い物リスト"]:
         reply_text = f"「{user_message}」機能は現在準備中です！🛠️"
