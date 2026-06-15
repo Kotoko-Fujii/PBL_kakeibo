@@ -131,7 +131,7 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_message = event.message.text.replace(" ", " ").strip()
+    user_message = re.sub(r'\s+', ' ', event.message.text).strip()
     
     # ★【変更】送信者のLINEユーザーIDを取得
     user_id = event.source.user_id
