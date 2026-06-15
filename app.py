@@ -173,11 +173,13 @@ def handle_message(event):
 
     elif user_message == "取り消し":
         try:
-            records = ws.get_all_values()
-            if len(records) > 1:
-                recent = records[-5:]
-                recent.reverse()
-                msg_lines = ["どれを取り消しますか？番号（1〜5）を送ってね！🗑️\n"]
+            all_records = ws.get_all_values()
+            data_records = all_records[1:] # ここでヘッダー（1行目）を完全に除外！
+            
+            if len(data_records) > 0:
+                recent = data_records[-10:] # 直近10回分を取得
+                recent.reverse() # 最新順に反転
+                msg_lines = ["どれを取り消しますか？番号（1〜10）を送ってね！🗑️\n"]
                 for i, r in enumerate(recent):
                     if len(r) >= 3:
                         time_part = r[0].split(' ')[1] if ' ' in r[0] else r[0]
@@ -188,13 +190,18 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"エラーが発生しました: {e}"
 
-    elif user_message.isdigit() and 1 <= int(user_message) <= 5:
+    elif user_message.isdigit() and 1 <= int(user_message) <= 10: # 1〜10に対応
         try:
-            records = ws.get_all_values()
+            all_records = ws.get_all_values()
+            data_records = all_records[1:] # ヘッダーを除外したデータ数を確認
             delete_num = int(user_message)
-            if len(records) >= delete_num + 1:
-                target_idx = len(records) - delete_num + 1 
-                deleted_row = records[target_idx - 1]
+            
+            # 選択された番号が、実際のデータ数以内かチェック
+            if delete_num <= len(data_records):
+                # 削除対象の行番号（スプレッドシート上の行番号はヘッダー含むため all_records を基準に計算）
+                target_idx = len(all_records) - delete_num + 1 
+                deleted_row = all_records[target_idx - 1] # 削除する行のデータを取得
+                
                 ws.delete_rows(target_idx)
                 reply_text = f"🗑️ 「{deleted_row[1]} ({deleted_row[2]}円)」の記録を取り消しました！"
             else:
