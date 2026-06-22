@@ -50,32 +50,28 @@ def get_or_create_user_sheet(sh, user_id):
         # すでにそのユーザーIDのタブがあれば、それを開く
         return sh.worksheet(user_id)
     except gspread.exceptions.WorksheetNotFound:
-        # タブが見つからなければ、新しく作成する（安全のため数値で指定）
-        ws = sh.add_worksheet(title=user_id, rows=1000, cols=4)
+        # タブが見つからなければ新しく作成する（右上に予算枠を作るため cols=10 に拡張）
+        ws = sh.add_worksheet(title=user_id, rows=1000, cols=10)
         # 1行目にヘッダーを書き込む
         ws.append_row(["日時", "品目", "金額", "カテゴリ"])
+        
+        # 右上の空きスペース(F1, G1)に予算枠を作る
+        ws.update_acell('F1', '毎日の予算')
+        ws.update_acell('G1', '2000')
         return ws
 
-def get_or_create_settings_sheet(sh):
+# そのユーザーのシートのG1セルから予算を読み取る
+def get_budget(ws):
     try:
-        return sh.worksheet("設定")
-    except:
-        ws = sh.add_worksheet(title="設定", rows=10, cols=2)
-        ws.update_acell('A1', '毎日の予算')
-        ws.update_acell('B1', '2000')
-        return ws
-
-def get_budget(sh):
-    try:
-        ws = get_or_create_settings_sheet(sh)
-        val = ws.acell('B1').value
+        val = ws.acell('G1').value
         return int(str(val).replace(',', '')) if val else 2000
     except:
         return 2000
 
-def set_budget(sh, amount):
-    ws = get_or_create_settings_sheet(sh)
-    ws.update_acell('B1', str(amount))
+# そのユーザーのシートのG1セルに予算を書き込む
+def set_budget(ws, amount):
+    ws.update_acell('F1', '毎日の予算')
+    ws.update_acell('G1', str(amount))
 
 def get_today_spent(ws, today_str):
     try:
@@ -152,7 +148,7 @@ def handle_message(event):
     try:
         gc = get_gspread_client()
         sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-        # ユーザー専用のタブを開く（無ければ自動生成）
+        # ユーザー専用のタブを開く（無ければ予算枠付きで自動生成）
         ws = get_or_create_user_sheet(sh, user_id)
     except Exception as e:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"スプレッドシート接続エラー: {e}"))
@@ -162,7 +158,7 @@ def handle_message(event):
 
     # 1. メニュー・ボタン機能の判定
     if user_message == "予算":
-        current_budget = get_budget(sh)
+        current_budget = get_budget(ws)
         reply_text = f"現在の「毎日の予算」は {current_budget:,}円 です。\n変更する場合は、「予算 3000」のように送ってね！💰"
         
     elif user_message.startswith("予算 "):
@@ -171,7 +167,7 @@ def handle_message(event):
             if len(parts) >= 2:
                 new_budget_str = parts[1].replace(",", "").replace("円", "")
                 if new_budget_str.isdigit():
-                    set_budget(sh, int(new_budget_str))
+                    set_budget(ws, int(new_budget_str))
                     reply_text = f"✅ 毎日の予算を {int(new_budget_str):,}円 に設定しました！"
                 else:
                     reply_text = "予算の金額は数字で教えてね！"
@@ -249,7 +245,7 @@ def handle_message(event):
                 category = ask_gemini_category(item_name) # AI判定
                 
                 try:
-                    budget = get_budget(sh)
+                    budget = get_budget(ws)
                     today_spent = get_today_spent(ws, today_str)
                     
                     # ユーザー専用のタブに追加される
