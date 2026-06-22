@@ -249,7 +249,8 @@ def handle_message(event):
                     today_spent = get_today_spent(ws, today_str)
                     
                     # ユーザー専用のタブに追加される
-                    ws.append_row([date_str, item_name, item_price, category])
+                   # ユーザー専用のタブに追加される（A〜D列を基準にするように修正）
+                    ws.append_row([date_str, item_name, item_price, category], table_range="A:D")
                     
                     new_today_spent = today_spent + item_price
                     remaining = budget - new_today_spent
