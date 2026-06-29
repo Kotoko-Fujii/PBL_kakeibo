@@ -23,6 +23,10 @@ try:
 except:
     gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
+# ★Renderの時差対策：強制的に日本時間（JST）を取得する関数
+def get_jst_now():
+    return datetime.utcnow() + timedelta(hours=9)
+
 # --- 2. データ集計と特徴量抽出ロジック（変更なし） ---
 def analyze_purchase_cycles(records):
     today = datetime.now()
