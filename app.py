@@ -60,6 +60,16 @@ def get_or_create_user_sheet(sh, user_id):
         ws.update_acell('G1', '2000')
         return ws
 
+#お買い物リスト
+def get_or_create_list_sheet(sh, user_id):
+    list_title = f"リスト_{user_id}"
+    try:
+        return sh.worksheet(list_title)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=list_title, rows=100, cols=2)
+        ws.append_row(["追加日時", "品目"])
+        return ws
+
 # そのユーザーのシートのG1セルから予算を読み取る
 def get_budget(ws):
     try:
