@@ -27,7 +27,7 @@ def send_morning_budget_reminders():
             user_id = ws.title
             
             # LINEのユーザーIDは「U」から始まる33文字の英数字なので、それ以外（管理用など）はスキップ
-            if not (user_id.startswith('U') and len(user_id) == 32):
+            if not (user_id.startswith('U') and len(user_id) == 33):
                 continue
                 
             # 各ユーザーのシートから予算（G1セル）を取得
