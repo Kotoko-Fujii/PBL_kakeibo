@@ -62,14 +62,17 @@ def get_or_create_list_sheet(sh, user_id):
         ws = sh.add_worksheet(title=list_title, rows=100, cols=2)
         ws.append_row(["追加日時", "品目"])
         return ws
-
-def get_or_create_settings_sheet(sh):
+# ユーザー専用の家計簿タブを取得または作成
+def get_or_create_user_sheet(sh, user_id):
     try:
-        return sh.worksheet("設定")
-    except:
-        ws = sh.add_worksheet(title="設定", rows=10, cols=2)
-        ws.update_acell('A1', '毎日の予算')
-        ws.update_acell('B1', '2000')
+        return sh.worksheet(user_id)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=user_id, rows=1000, cols=10)
+        # E列に「当時の予算」を追加
+        ws.append_row(["日時", "品目", "金額", "カテゴリ", "当時の予算"])
+        # カスタムカテゴリ設定用（I列・J列）
+        ws.update_acell('I1', 'カスタム単語')
+        ws.update_acell('J1', '指定カテゴリ')
         return ws
 
 def get_budget(sh):
@@ -101,6 +104,25 @@ def get_today_spent(ws, today_str):
         return total
     except:
         return 0
+
+# --- カスタムカテゴリルール用関数 ---
+def get_custom_categories(ws):
+    try:
+        keywords = ws.col_values(9)[1:] # I列
+        categories = ws.col_values(10)[1:] # J列
+        custom_rules = {}
+        for k, c in zip(keywords, categories):
+            if k and c:
+                custom_rules[k] = c
+        return custom_rules
+    except:
+        return {}
+
+def add_custom_category(ws, keyword, category):
+    keywords = ws.col_values(9)
+    next_row = len(keywords) + 1
+    ws.update_acell(f'I{next_row}', keyword)
+    ws.update_acell(f'J{next_row}', category)
 
 # --- AI判定関数 ---
 def ask_gemini_category(item_name):
@@ -252,8 +274,31 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"リストへの追加に失敗したよ: {e}"
 
+ # === (前略: 予算や取り消しの処理) ===
+
+    # 「カテゴリ設定」ボタンを押した時の説明
     elif user_message == "カテゴリ設定":
-        reply_text = f"「{user_message}」機能は現在準備中です！🛠️"
+        reply_text = "【カテゴリ設定】\n特定の単語を好きなカテゴリに固定できます！\n\n「カテゴリ設定 スタバ 食費」\n\nのように送ってね！💡\n設定できるカテゴリ: " + "、".join(CATEGORIES)
+
+    # 実際のカテゴリ設定処理
+    elif user_message.startswith("カテゴリ設定 "):
+        try:
+            parts = user_message.split(" ")
+            if len(parts) >= 3:
+                keyword = parts[1].strip()
+                category = parts[2].strip()
+                
+                if category in CATEGORIES:
+                    add_custom_category(ws, keyword, category)
+                    reply_text = f"✅ 「{keyword}」を「{category}」に設定しました！\n次から自動分類されます✨"
+                else:
+                    reply_text = f"❌ カテゴリは以下のいずれかを指定してね！\n{', '.join(CATEGORIES)}"
+            else:
+                reply_text = "「カテゴリ設定 [単語] [カテゴリ]」の形式で送ってね！\n例: カテゴリ設定 タバコ 娯楽"
+        except Exception as e:
+            reply_text = f"❌ 設定に失敗しました: {e}"
+
+  
 
     elif user_message == "節約":
         reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
@@ -275,13 +320,25 @@ def handle_message(event):
             
             if raw_price.isdigit():
                 item_price = int(raw_price)
-                category = ask_gemini_category(item_name)
+              # --- カスタムルールを優先 ---
+                category = None
+                custom_rules = get_custom_categories(ws)
+                for k, c in custom_rules.items():
+                    if k in item_name:
+                        category = c
+                        break
+                
+                # ルールになければAI判定
+                if not category:
+                    category = ask_gemini_category(item_name)
+                # ---------------------------------------------
                 
                 try:
                     budget = get_budget(sh)
                     today_spent = get_today_spent(ws, today_str)
                     
-                    ws.append_row([date_str, item_name, item_price, category])
+                    # ★E列に当時の予算も記録するよう修正
+                    ws.append_row([date_str, item_name, item_price, category, budget]
                     
                     new_today_spent = today_spent + item_price
                     remaining = budget - new_today_spent
