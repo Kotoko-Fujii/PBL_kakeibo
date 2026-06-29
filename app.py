@@ -44,14 +44,7 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# ユーザー専用の家計簿タブを取得または作成
-def get_or_create_user_sheet(sh, user_id):
-    try:
-        return sh.worksheet(user_id)
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=user_id, rows=1000, cols=4)
-        ws.append_row(["日時", "品目", "金額", "カテゴリ"])
-        return ws
+
 
 # ★【新規】ユーザー専用の「お買い物リスト」タブを取得または作成
 def get_or_create_list_sheet(sh, user_id):
@@ -75,6 +68,14 @@ def get_or_create_user_sheet(sh, user_id):
         ws.update_acell('J1', '指定カテゴリ')
         return ws
 
+def get_or_create_settings_sheet(sh):
+    try:
+        return sh.worksheet("設定")
+    except:
+        ws = sh.add_worksheet(title="設定", rows=10, cols=2)
+        ws.update_acell('A1', '毎日の予算')
+        ws.update_acell('B1', '2000')
+        return ws
 def get_budget(sh):
     try:
         ws = get_or_create_settings_sheet(sh)
@@ -337,10 +338,11 @@ def handle_message(event):
                     budget = get_budget(sh)
                     today_spent = get_today_spent(ws, today_str)
                     
-                    # ★E列に当時の予算も記録するよう修正
-                    ws.append_row([date_str, item_name, item_price, category, budget]
+                   # ★E列に当時の予算も記録するよう修正
+                    ws.append_row([date_str, item_name, item_price, category, budget], table_range="A:E")
                     
                     new_today_spent = today_spent + item_price
+                    
                     remaining = budget - new_today_spent
                     
                     budget_msg = f"\n💰 今日の残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ 今日の予算オーバー：{abs(remaining):,}円"
