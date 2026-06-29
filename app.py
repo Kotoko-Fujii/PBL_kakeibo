@@ -18,7 +18,7 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# --- Gemini設定 (一番安定していた自動探索機能に復元) ---
+# --- Gemini設定 ---
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_available_gemini_model():
@@ -44,23 +44,16 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(key_json, scope)
     return gspread.authorize(creds)
 
-# ユーザー専用のタブ（ワークシート）を取得または作成する関数
+# ユーザー専用の家計簿タブを取得または作成
 def get_or_create_user_sheet(sh, user_id):
     try:
-        # すでにそのユーザーIDのタブがあれば、それを開く
         return sh.worksheet(user_id)
     except gspread.exceptions.WorksheetNotFound:
-        # タブが見つからなければ新しく作成する（右上に予算枠を作るため cols=10 に拡張）
-        ws = sh.add_worksheet(title=user_id, rows=1000, cols=10)
-        # 1行目にヘッダーを書き込む
+        ws = sh.add_worksheet(title=user_id, rows=1000, cols=4)
         ws.append_row(["日時", "品目", "金額", "カテゴリ"])
-        
-        # 右上の空きスペース(F1, G1)に予算枠を作る
-        ws.update_acell('F1', '毎日の予算')
-        ws.update_acell('G1', '2000')
         return ws
 
-#お買い物リスト
+# ★【新規】ユーザー専用の「お買い物リスト」タブを取得または作成
 def get_or_create_list_sheet(sh, user_id):
     list_title = f"リスト_{user_id}"
     try:
@@ -70,23 +63,31 @@ def get_or_create_list_sheet(sh, user_id):
         ws.append_row(["追加日時", "品目"])
         return ws
 
-# そのユーザーのシートのG1セルから予算を読み取る
-def get_budget(ws):
+def get_or_create_settings_sheet(sh):
     try:
-        val = ws.acell('G1').value
+        return sh.worksheet("設定")
+    except:
+        ws = sh.add_worksheet(title="設定", rows=10, cols=2)
+        ws.update_acell('A1', '毎日の予算')
+        ws.update_acell('B1', '2000')
+        return ws
+
+def get_budget(sh):
+    try:
+        ws = get_or_create_settings_sheet(sh)
+        val = ws.acell('B1').value
         return int(str(val).replace(',', '')) if val else 2000
     except:
         return 2000
 
-# そのユーザーのシートのG1セルに予算を書き込む
-def set_budget(ws, amount):
-    ws.update_acell('F1', '毎日の予算')
-    ws.update_acell('G1', str(amount))
+def set_budget(sh, amount):
+    ws = get_or_create_settings_sheet(sh)
+    ws.update_acell('B1', str(amount))
 
 def get_today_spent(ws, today_str):
     try:
         all_values = ws.get_all_values()
-        records = all_values[1:]  # ヘッダーをスキップ
+        records = all_values[1:]
         
         if len(records) > 100:
             records = records[-100:]
@@ -145,10 +146,7 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    # 全角スペースや連続するスペースを安全に1つの半角スペースに統一
     user_message = re.sub(r'\s+', ' ', event.message.text).strip()
-    
-    # 送信者のLINEユーザーIDを取得
     user_id = event.source.user_id
 
     now = datetime.now()
@@ -158,7 +156,6 @@ def handle_message(event):
     try:
         gc = get_gspread_client()
         sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
-        # ユーザー専用のタブを開く（無ければ予算枠付きで自動生成）
         ws = get_or_create_user_sheet(sh, user_id)
     except Exception as e:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"スプレッドシート接続エラー: {e}"))
@@ -168,7 +165,7 @@ def handle_message(event):
 
     # 1. メニュー・ボタン機能の判定
     if user_message == "予算":
-        current_budget = get_budget(ws)
+        current_budget = get_budget(sh)
         reply_text = f"現在の「毎日の予算」は {current_budget:,}円 です。\n変更する場合は、「予算 3000」のように送ってね！💰"
         
     elif user_message.startswith("予算 "):
@@ -177,7 +174,7 @@ def handle_message(event):
             if len(parts) >= 2:
                 new_budget_str = parts[1].replace(",", "").replace("円", "")
                 if new_budget_str.isdigit():
-                    set_budget(ws, int(new_budget_str))
+                    set_budget(sh, int(new_budget_str))
                     reply_text = f"✅ 毎日の予算を {int(new_budget_str):,}円 に設定しました！"
                 else:
                     reply_text = "予算の金額は数字で教えてね！"
@@ -186,15 +183,14 @@ def handle_message(event):
         except:
             reply_text = "設定に失敗しました。"
 
-    # 「取り消し」リストの表示（ヘッダー除外＆10件表示）
     elif user_message == "取り消し":
         try:
             all_records = ws.get_all_values()
-            data_records = all_records[1:] # 1行目（ヘッダー）を完全に除外
+            data_records = all_records[1:]
             
             if len(data_records) > 0:
-                recent = data_records[-10:] # 直近10回分を取得
-                recent.reverse() # 最新順に反転
+                recent = data_records[-10:]
+                recent.reverse()
                 msg_lines = ["どれを取り消しますか？番号（1〜10）を送ってね！🗑️\n"]
                 for i, r in enumerate(recent):
                     if len(r) >= 3:
@@ -206,18 +202,15 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"エラーが発生しました: {e}"
 
-    # 「取り消し」の実行（1〜10に対応＆ヘッダーのズレ補正）
     elif user_message.isdigit() and 1 <= int(user_message) <= 10:
         try:
             all_records = ws.get_all_values()
-            data_records = all_records[1:] # ヘッダーを除外した純粋なデータ
+            data_records = all_records[1:]
             delete_num = int(user_message)
             
-            # 選択された番号が、実際のデータ数以内かチェック
             if delete_num <= len(data_records):
-                # スプレッドシート上の行番号はヘッダーを含むため、all_records を基準に計算
                 target_idx = len(all_records) - delete_num + 1 
-                deleted_row = all_records[target_idx - 1] # 削除する行のデータを取得
+                deleted_row = all_records[target_idx - 1]
                 
                 ws.delete_rows(target_idx)
                 reply_text = f"🗑️ 「{deleted_row[1]} ({deleted_row[2]}円)」の記録を取り消しました！"
@@ -229,7 +222,37 @@ def handle_message(event):
     elif user_message == "リマインド":
         reply_text = "🔔 消耗品のリマインドは毎日夜10時に自動で届くよ！\nシャンプー、歯ブラシ、洗剤、スポンジの購入間隔をシステムが監視中だよ👀"
 
-    elif user_message in ["カテゴリ設定", "お買い物リスト"]:
+    # ★【新規】お買い物リストの確認（リッチメニューのボタン対応）
+    elif user_message == "お買い物リスト":
+        try:
+            list_ws = get_or_create_list_sheet(sh, user_id)
+            records = list_ws.get_all_values()[1:]
+            if records:
+                msg_lines = ["📝 今のお買い物リストだよ！\n"]
+                for i, r in enumerate(records):
+                    if len(r) >= 2:
+                        msg_lines.append(f"{i+1}. {r[1]}")
+                reply_text = "\n".join(msg_lines)
+            else:
+                reply_text = "📝 今のお買い物リストは空っぽだよ！\n「買う 洗剤」のように送って追加してね✨"
+        except Exception as e:
+            reply_text = f"リストの取得に失敗したよ: {e}"
+
+    # ★【新規】お買い物リストへの追加
+    elif user_message.startswith("買う ") or user_message.startswith("メモ "):
+        try:
+            parts = user_message.split(" ", 1)
+            if len(parts) >= 2:
+                item_name = parts[1].strip()
+                list_ws = get_or_create_list_sheet(sh, user_id)
+                list_ws.append_row([date_str, item_name])
+                reply_text = f"📝 お買い物リストに「{item_name}」を追加したよ！\n確認するときはメニューのボタンを押してね。"
+            else:
+                reply_text = "「買う 洗剤」のように、スペースを空けて品目を教えてね！"
+        except Exception as e:
+            reply_text = f"リストへの追加に失敗したよ: {e}"
+
+    elif user_message == "カテゴリ設定":
         reply_text = f"「{user_message}」機能は現在準備中です！🛠️"
 
     elif user_message == "節約":
@@ -237,13 +260,13 @@ def handle_message(event):
         
     elif user_message == "合計":
         try:
-            prices = ws.col_values(3)[1:] # 3列目（金額）
+            prices = ws.col_values(3)[1:]
             total = sum([int(str(p).replace(',', '')) for p in prices if str(p).replace(',', '').isdigit()])
             reply_text = f"💰 今月の合計支出：{total:,}円"
         except Exception as e:
             reply_text = f"❌ 集計エラー: {e}"
 
-    # 2. 家計簿の入力機能（品目 金額）
+    # 2. 家計簿の入力機能（品目 金額）＆ ★【新規】自動チェックオフ
     elif " " in user_message:
         items = [i for i in user_message.split(" ") if i]
         if len(items) >= 2:
@@ -252,21 +275,34 @@ def handle_message(event):
             
             if raw_price.isdigit():
                 item_price = int(raw_price)
-                category = ask_gemini_category(item_name) # AI判定
+                category = ask_gemini_category(item_name)
                 
                 try:
-                    budget = get_budget(ws)
+                    budget = get_budget(sh)
                     today_spent = get_today_spent(ws, today_str)
                     
-                
-                   # ユーザー専用のタブに追加される（A〜D列を基準にするように修正）
-                    ws.append_row([date_str, item_name, item_price, category], table_range="A:D")
+                    ws.append_row([date_str, item_name, item_price, category])
                     
                     new_today_spent = today_spent + item_price
                     remaining = budget - new_today_spent
                     
                     budget_msg = f"\n💰 今日の残予算：{remaining:,}円" if remaining >= 0 else f"\n⚠️ 今日の予算オーバー：{abs(remaining):,}円"
-                    reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n✅ 「{category}」で記録！{budget_msg}"
+                    
+                    # ★【新規】リストからの自動削除ロジック
+                    deleted_msg = ""
+                    try:
+                        list_ws = get_or_create_list_sheet(sh, user_id)
+                        list_records = list_ws.get_all_values()
+                        # 下（最新）から順番に探して、一致したら行ごと削除
+                        for i in range(len(list_records) - 1, 0, -1):
+                            if len(list_records[i]) >= 2 and list_records[i][1] == item_name:
+                                list_ws.delete_rows(i + 1)
+                                deleted_msg = f"\n✨ 買えたんだね！リストから「{item_name}」を消しておいたよ！"
+                                break
+                    except Exception as e:
+                        print(f"リスト自動削除エラー: {e}") # メイン処理を止めないように裏側でエラーログだけ出す
+
+                    reply_text = f"【完了】\n品目：{item_name}\n金額：{item_price:,}円\n✅ 「{category}」で記録！{deleted_msg}{budget_msg}"
                 except Exception as e:
                     reply_text = f"❌ 保存失敗: {e}"
             else:
