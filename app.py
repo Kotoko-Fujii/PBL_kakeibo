@@ -68,25 +68,23 @@ def get_or_create_user_sheet(sh, user_id):
         ws.update_acell('J1', '指定カテゴリ')
         return ws
 
-def get_or_create_settings_sheet(sh):
+# ユーザーシート（ws）のG1セルで予算を管理する ---
+
+def get_budget(ws):
     try:
-        return sh.worksheet("設定")
-    except:
-        ws = sh.add_worksheet(title="設定", rows=10, cols=2)
-        ws.update_acell('A1', '毎日の予算')
-        ws.update_acell('B1', '2000')
-        return ws
-def get_budget(sh):
-    try:
-        ws = get_or_create_settings_sheet(sh)
-        val = ws.acell('B1').value
-        return int(str(val).replace(',', '')) if val else 2000
+        val = ws.acell('G1').value
+        # まだG1セルに予算が書かれていない場合の初期設定
+        if not val:
+            ws.update_acell('F1', '毎日の予算')
+            ws.update_acell('G1', '2000')
+            return 2000
+        return int(str(val).replace(',', ''))
     except:
         return 2000
 
-def set_budget(sh, amount):
-    ws = get_or_create_settings_sheet(sh)
-    ws.update_acell('B1', str(amount))
+def set_budget(ws, amount):
+    ws.update_acell('F1', '毎日の予算')
+    ws.update_acell('G1', str(amount))
 
 def get_today_spent(ws, today_str):
     try:
@@ -187,8 +185,8 @@ def handle_message(event):
     reply_text = ""
 
     # 1. メニュー・ボタン機能の判定
-    if user_message == "予算":
-        current_budget = get_budget(sh)
+   if user_message == "予算":
+        current_budget = get_budget(ws)
         reply_text = f"現在の「毎日の予算」は {current_budget:,}円 です。\n変更する場合は、「予算 3000」のように送ってね！💰"
         
     elif user_message.startswith("予算 "):
@@ -197,7 +195,7 @@ def handle_message(event):
             if len(parts) >= 2:
                 new_budget_str = parts[1].replace(",", "").replace("円", "")
                 if new_budget_str.isdigit():
-                    set_budget(sh, int(new_budget_str))
+                    set_budget(ws, int(new_budget_str))
                     reply_text = f"✅ 毎日の予算を {int(new_budget_str):,}円 に設定しました！"
                 else:
                     reply_text = "予算の金額は数字で教えてね！"
@@ -335,7 +333,7 @@ def handle_message(event):
                 # ---------------------------------------------
                 
                 try:
-                    budget = get_budget(sh)
+                    budget = get_budget(ws)
                     today_spent = get_today_spent(ws, today_str)
                     
                    # ★E列に当時の予算も記録するよう修正
