@@ -1,7 +1,7 @@
 import os
 import json
 import gspread
-from datetime import datetime
+from datetime import datetime, timedelta # ★ timedelta を追加！
 from collections import defaultdict
 from oauth2client.service_account import ServiceAccountCredentials
 from linebot import LineBotApi
@@ -27,9 +27,9 @@ except:
 def get_jst_now():
     return datetime.utcnow() + timedelta(hours=9)
 
-# --- 2. データ集計と特徴量抽出ロジック（変更なし） ---
+# --- 2. データ集計と特徴量抽出ロジック ---
 def analyze_purchase_cycles(records):
-    today = datetime.now()
+    today = get_jst_now() # ★ ここを datetime.now() から get_jst_now() に変更！
     purchase_dates = defaultdict(list)
     
     for r in records:
@@ -67,26 +67,30 @@ def analyze_purchase_cycles(records):
                 })
     return alerts
 
-# --- 3. メイン処理（★マルチテナント対応版） ---
+# --- 3. メイン処理（マルチテナント対応版） ---
 def main():
+    print("🚀 リマインダー処理を開始します...")
     try:
         gc = get_gspread_client()
         sh = gc.open_by_key(os.getenv('SPREADSHEET_ID'))
         
         # スプレッドシート内のすべてのタブ（ワークシート）を取得
         worksheets = sh.worksheets()
-        today_str = datetime.now().strftime('%Y/%m/%d')
+        today_str = get_jst_now().strftime('%Y/%m/%d') # ★ ここも get_jst_now() に変更！
+        print(f"📅 今日の日付(JST): {today_str}")
         
         # 各ユーザー（タブ）ごとに処理を繰り返す
         for ws in worksheets:
             ws_title = ws.title
             
-            # 「設定」シートや、LINEのID（Uから始まる33文字）じゃないタブは無視する
-            if ws_title == "設定" or not ws_title.startswith("U") or len(ws_title) != 33:
+            # ★「設定」タブ、「リスト_」から始まるタブ、Uから始まらないタブは無視する
+            if not ws_title.startswith("U") or "リスト" in ws_title:
                 continue
             
             # タブの名前＝送信先のLINEユーザーID
-            target_user_id = ws_title
+            target_user_id = ws_title.strip()
+            print(f"👤 送信対象のLINE IDを発見: {target_user_id}")
+            
             records = ws.get_all_values()[1:] # ヘッダーを飛ばす
             
             has_input_today = any(r[0].startswith(today_str) for r in records if len(r) > 0)
