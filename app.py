@@ -388,8 +388,8 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(
     send_morning_reminder, 
     'cron', 
-    hour=2, 
-    minute=6, 
+    hour=9, 
+    minute=0, 
     timezone=pytz.timezone('Asia/Tokyo')
 )
 scheduler.start()
