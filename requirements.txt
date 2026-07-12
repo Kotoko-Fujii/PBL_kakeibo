@@ -4,3 +4,5 @@ gspread
 oauth2client
 gunicorn
 google-generativeai
+APScheduler
+pytz
