@@ -371,6 +371,30 @@ def handle_message(event):
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
+# =====================================================================
+# ★【新規追加】毎朝の自動通知機能
+# =====================================================================
+from apscheduler.schedulers.background import BackgroundScheduler
+import pytz
+
+def send_morning_reminder():
+    try:
+        line_bot_api.broadcast(TextSendMessage(text="☀️ 今日も家計簿を登録しよう！💰"))
+        print("朝の通知メッセージを正常に配信しました。")
+    except Exception as e:
+        print(f"朝の通知配信でエラーが発生しました: {e}")
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    send_morning_reminder, 
+    'cron', 
+    hour=8, 
+    minute=0, 
+    timezone=pytz.timezone('Asia/Tokyo')
+)
+scheduler.start()
+# =====================================================================
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
