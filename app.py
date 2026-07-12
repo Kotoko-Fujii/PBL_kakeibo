@@ -185,7 +185,7 @@ def handle_message(event):
     reply_text = ""
 
     # 1. メニュー・ボタン機能の判定
-   if user_message == "予算":
+    if user_message == "予算":
         current_budget = get_budget(ws)
         reply_text = f"現在の「毎日の予算」は {current_budget:,}円 です。\n変更する場合は、「予算 3000」のように送ってね！💰"
         
