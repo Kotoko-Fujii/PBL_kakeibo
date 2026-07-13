@@ -302,21 +302,40 @@ def handle_message(event):
     elif user_message == "節約":
         reply_text = f"💡 アドバイス：\n{random.choice(['自炊は最強！', 'マイボトルで節約！', 'コンビニ買いを我慢！'])}"
         
-    elif user_message == "合計" or user_message == "合計金額":
+    elif "合計" in user_message:
         try:
             # スプレッドシートの全データを取得
             all_rows = ws.get_all_values()
             records = all_rows[1:]  # ヘッダーを飛ばす
             
+            # ユーザーの入力から年・月を特定する
+            # パターン1: 「2026/05」や「2026-05」のような形式を抽出
+            month_match = re.search(r'(\d{4})[/\-](\d{1,2})', user_message)
+            # パターン2: 「5月」のような形式を抽出
+            numeric_month_match = re.search(r'(\d{1,2})月', user_message)
+            
+            if month_match:
+                target_year = month_match.group(1)
+                target_month = f"{int(month_match.group(2)):02d}"
+                target_month_str = f"{target_year}/{target_month}"
+            elif numeric_month_match:
+                target_year = now.strftime('%Y')  # 年の指定がない場合は今年の年を使う
+                target_month = f"{int(numeric_month_match.group(1)):02d}"
+                target_month_str = f"{target_year}/{target_month}"
+            else:
+                # 「合計」単体など、月の指定がない場合は「今月」にする
+                target_month_str = now.strftime('%Y/%m')
+            
+            # 表示用の月名（例: "05月" -> "5月"）
+            display_month = f"{int(target_month_str.split('/')[1])}月"
+            display_year = target_month_str.split('/')[1]
+            
             total = 0
             category_totals = {cat: 0 for cat in CATEGORIES}
             
-            # 今月の年・月を取得 (例: "2026/07")
-            current_month_str = now.strftime('%Y/%m')
-            
             for r in records:
-                # 日時、品目、金額、カテゴリが揃っているか、かつ今月のデータかチェック
-                if len(r) >= 4 and str(r[0]).startswith(current_month_str):
+                # 指定された年月のデータかチェック
+                if len(r) >= 4 and str(r[0]).startswith(target_month_str):
                     price_str = str(r[2]).replace(',', '').replace('円', '').strip()
                     cat_name = str(r[3]).strip()
                     
@@ -324,20 +343,23 @@ def handle_message(event):
                         price = int(price_str)
                         total += price
                         
-                        # 定義されているカテゴリに加算（なければ「その他」へ）
                         if cat_name in category_totals:
                             category_totals[cat_name] += price
                         else:
-                            category_totals["その他"] += price
+                            category_totals["undefined"] = category_totals.get("undefined", 0) + price
             
             # メッセージの組み立て
-            msg_lines = [f"📊 {now.strftime('%m月')}の家計簿集計\n"]
+            msg_lines = [f"📊 {display_month}（{target_month_str}）の家計簿集計\n"]
             msg_lines.append(f"💰 総合計：{total:,}円\n")
             msg_lines.append("【カテゴリ別内訳】")
             
             for cat, cat_total in category_totals.items():
-                # 0円のカテゴリもわかりやすさのために一応表示（不要なら if cat_total > 0: で囲んでください）
-                msg_lines.append(f"・{cat}: {cat_total:,}円")
+                if cat != "undefined":
+                    msg_lines.append(f"・{cat}: {cat_total:,}円")
+            
+            # 分類漏れ（その他）があれば加算
+            if "undefined" in category_totals and category_totals["undefined"] > 0:
+                msg_lines.append(f"・その他: {category_totals['undefined']:,}円")
                 
             reply_text = "\n".join(msg_lines)
             
