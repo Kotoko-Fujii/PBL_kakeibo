@@ -11,6 +11,11 @@ from datetime import datetime
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import TextSendMessage, ImageSendMessage
+import matplotlib
+matplotlib.use('Agg') # サーバーの裏側で画像を生成するための設定
+import matplotlib.pyplot as plt
+import japanize_matplotlib # グラフの日本語文字化け防止
 
 app = Flask(__name__)
 
@@ -304,14 +309,11 @@ def handle_message(event):
         
     elif "合計" in user_message:
         try:
-            # スプレッドシートの全データを取得
             all_rows = ws.get_all_values()
-            records = all_rows[1:]  # ヘッダーを飛ばす
+            records = all_rows[1:]
             
-            # ユーザーの入力から年・月を特定する
-            # パターン1: 「2026/05」や「2026-05」のような形式を抽出
+            # 年月の特定
             month_match = re.search(r'(\d{4})[/\-](\d{1,2})', user_message)
-            # パターン2: 「5月」のような形式を抽出
             numeric_month_match = re.search(r'(\d{1,2})月', user_message)
             
             if month_match:
@@ -319,22 +321,19 @@ def handle_message(event):
                 target_month = f"{int(month_match.group(2)):02d}"
                 target_month_str = f"{target_year}/{target_month}"
             elif numeric_month_match:
-                target_year = now.strftime('%Y')  # 年の指定がない場合は今年の年を使う
+                target_year = now.strftime('%Y')
                 target_month = f"{int(numeric_month_match.group(1)):02d}"
                 target_month_str = f"{target_year}/{target_month}"
             else:
-                # 「合計」単体など、月の指定がない場合は「今月」にする
                 target_month_str = now.strftime('%Y/%m')
             
-            # 表示用の月名（例: "05月" -> "5月"）
             display_month = f"{int(target_month_str.split('/')[1])}月"
-            display_year = target_month_str.split('/')[1]
             
             total = 0
             category_totals = {cat: 0 for cat in CATEGORIES}
             
+            # データの集計
             for r in records:
-                # 指定された年月のデータかチェック
                 if len(r) >= 4 and str(r[0]).startswith(target_month_str):
                     price_str = str(r[2]).replace(',', '').replace('円', '').strip()
                     cat_name = str(r[3]).strip()
@@ -342,29 +341,69 @@ def handle_message(event):
                     if price_str.isdigit():
                         price = int(price_str)
                         total += price
-                        
                         if cat_name in category_totals:
                             category_totals[cat_name] += price
                         else:
                             category_totals["undefined"] = category_totals.get("undefined", 0) + price
             
-            # メッセージの組み立て
+            # --- 1. テキストメッセージの作成 ---
             msg_lines = [f"📊 {display_month}（{target_month_str}）の家計簿集計\n"]
             msg_lines.append(f"💰 総合計：{total:,}円\n")
             msg_lines.append("【カテゴリ別内訳】")
             
+            labels = []
+            sizes = []
             for cat, cat_total in category_totals.items():
-                if cat != "undefined":
+                if cat != "undefined" and cat_total > 0:
                     msg_lines.append(f"・{cat}: {cat_total:,}円")
+                    labels.append(cat)
+                    sizes.append(cat_total)
             
-            # 分類漏れ（その他）があれば加算
             if "undefined" in category_totals and category_totals["undefined"] > 0:
                 msg_lines.append(f"・その他: {category_totals['undefined']:,}円")
+                labels.append("その他")
+                sizes.append(category_totals["undefined"])
                 
             reply_text = "\n".join(msg_lines)
             
+            # --- 2. グラフ画像の作成と保存 ---
+            image_url = None
+            if total > 0 and len(sizes) > 0:
+                plt.figure(figsize=(6, 6))
+                # パステルカラーのおしゃれな配色
+                colors = ['#ff9999','#66b3ff','#99ff99','#ffcc99','#33ccff','#ff66cc','#cc99ff', '#c2c2f0']
+                plot_colors = [colors[i % len(colors)] for i in range(len(labels))]
+                
+                plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=plot_colors, textprops={'fontsize': 14})
+                plt.title(f"{display_month} 支出割合", fontsize=18, fontweight='bold')
+                
+                # ユーザーIDを使って画像を保存（複数人が同時に実行しても画像が混ざらないようにするため）
+                user_id = event.source.user_id
+                filename = f"chart_{user_id}.png"
+                
+                # Flaskのデフォルト公開フォルダ「static」に保存
+                os.makedirs("static", exist_ok=True)
+                filepath = os.path.join("static", filename)
+                plt.savefig(filepath, bbox_inches='tight', dpi=150)
+                plt.close()
+                
+                # RenderのアプリURLから画像の公開URLを自動生成（httpsに変換）
+                base_url = request.host_url.replace('http://', 'https://')
+                image_url = f"{base_url}static/{filename}"
+            
+            # --- 3. LINEへテキストと画像を一緒に送信 ---
+            messages = [TextSendMessage(text=reply_text)]
+            if image_url:
+                messages.append(ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
+                
+            line_bot_api.reply_message(event.reply_token, messages)
+            
+            # この処理が終わったら一番下の送信処理がダブらないようにここで終了させる
+            return "OK"
+            
         except Exception as e:
-            reply_text = f"❌ 集計エラー: {e}"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 集計・グラフ生成エラー: {e}"))
+            return "OK"
 
     # 2. 家計簿の入力機能（品目 金額）＆ ★【新規】自動チェックオフ
     elif " " in user_message:
