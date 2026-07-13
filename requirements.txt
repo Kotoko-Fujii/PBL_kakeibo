@@ -6,3 +6,5 @@ gunicorn
 google-generativeai
 APScheduler
 pytz
+matplotlib
+japanize-matplotlib
